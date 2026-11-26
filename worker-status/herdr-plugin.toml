@@ -1,0 +1,12 @@
+id = "community.worker-status"
+name = "Worker Status"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Show live Herdr agent status in a terminal pane"
+platforms = ["linux", "macos", "windows"]
+
+[[panes]]
+id = "status"
+title = "Worker status"
+placement = "split"
+command = ["node", "index.mjs"]
