@@ -9,24 +9,80 @@ import { stdin, stdout } from "node:process";
 const root = dirname(fileURLToPath(import.meta.url));
 const assets = join(root, "assets");
 const harnesses = ["claude", "omp", "codex", "agy"];
-const defaults = { chief: "claude", workers: "omp", compact_percent: 50, model_fallback: { agy: "hydrogen", luna: "openai-codex/gpt-6-luna", terra: "openai-codex/gpt-6.1-terra", sol: "openai-codex/gpt-6.1-sol" } };
-function requireAgyModelApproval(isDefault, approved) {
-  if (!isDefault && !approved) throw new Error("A newer agy model requires explicit user approval");
+const categories = ["normal", "coding", "debugging", "research"];
+const defaults = { chief: "claude", compact_percent: 50 };
+// Static suggestions may be outdated; prefer live model lists when available.
+const MODEL_SUGGESTIONS = {
+  claude: "claude-sonnet-4-5",
+  omp: "openai-codex/gpt-6-luna",
+  codex: "gpt-5-codex",
+  agy: "hydrogen",
+};
+function modelList(harness) {
+  if (harness !== "omp") return [];
+  const result = process.platform === "win32"
+    ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "omp models"], { encoding: "utf8", windowsHide: true })
+    : spawnSync("omp", ["models"], { encoding: "utf8", windowsHide: true });
+  return result.status === 0 ? result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) : [];
 }
-function validateAgyModel(model, approved = false) {
-  const value = typeof model === "string" ? model.trim() : "";
-  if (!value) throw new Error("agy model must be a non-empty string");
-  const olderGemini = /^gemini-(\d+)(?:\.\d+)?(?:-|$)/i.exec(value);
-  if (olderGemini && Number(olderGemini[1]) < 4) throw new Error(`Refusing older agy model "${value}"; use hydrogen (Gemini 4)`);
-  requireAgyModelApproval(value === "hydrogen", approved);
+async function askValue(label, suggested, { ask, choices = [], values = [], suggestionNote = "" } = {}) {
+  if (!ask) return suggested;
+  stdout.write(`${label}${choices.length ? ` (${choices.join(", ")})` : ""}\nSuggested${suggestionNote}: ${suggested || "none"}; press Enter to accept or type another value.\n`);
+  const rl = createInterface({ input: stdin, output: stdout });
+  let answer;
+  try { answer = await rl.question("> "); }
+  finally { rl.close(); }
+  const value = answer === "" ? suggested : answer;
+  if (values.length && !values.includes(value)) throw new Error(`Invalid ${label}: ${value}`);
   return value;
 }
-function validateOmpModel(model, tier) {
-  const value = typeof model === "string" ? model.trim() : "";
-  if (!value) throw new Error(`omp ${tier} model must be a non-empty string`);
-  if (/google-antigravity|gemini/i.test(value)) throw new Error(`Refusing omp model "${value}" for ${tier}: omp Workers use the OpenAI Codex ladder only; Gemini models are reachable only through agy.`);
-  if (!value.startsWith("openai-codex/")) throw new Error(`Refusing omp model "${value}" for ${tier}: omp Workers use the OpenAI Codex ladder only.`);
-  return value;
+function normalizeReconfigure(value) {
+  if (value === true) return true;
+  if (typeof value === "string" && categories.includes(value)) return value;
+  if (value) throw new Error(`Unknown reconfigure category: ${value}`);
+  return false;
+}
+function availableHarnesses(scan) { return harnesses.filter((name) => Boolean(scan[name])); }
+function validCategory(row, scan) {
+  return row && scan[row.harness] && typeof row.model === "string" && row.model.trim() &&
+    (row.effort === undefined || row.effort === "" || ["low", "medium", "high"].includes(row.effort));
+}
+async function configure({ yes, reconfigure, dryRun = false, scan = scanHarnesses(), home = homedir(), askValueFn = askValue, modelLists = {} }) {
+  const path = join(home, ".config", "herdr", "multi-agent.config.json");
+  const current = existsSync(path) ? parseJson(readFileSync(path, "utf8"), "configuration JSON") : {};
+  const reconfigureValue = normalizeReconfigure(reconfigure);
+  const ask = !yes;
+  const choices = availableHarnesses(scan);
+  if (!choices.length) throw new Error("No available harness");
+  const chiefSuggestion = scan[current.chief] ? current.chief : scan[defaults.chief] ? defaults.chief : choices[0];
+  const chief = reconfigureValue === true || !scan[current.chief]
+    ? await askValueFn("Chief harness", chiefSuggestion, { ask, choices, values: choices })
+    : current.chief;
+  const configured = { ...(current.categories ?? {}) };
+  const selectedCategories = reconfigureValue === true ? categories : reconfigureValue ? [reconfigureValue] : categories;
+  for (const category of selectedCategories) {
+    const old = configured[category];
+    if (validCategory(old, scan) && !reconfigureValue) continue;
+    const harnessSuggestion = scan[old?.harness] ? old.harness : scan.claude ? "claude" : choices[0];
+    const harness = await askValueFn(`${category} harness`, harnessSuggestion, { ask, choices, values: choices });
+    const listed = modelLists[harness] ?? modelList(harness);
+    const fallback = MODEL_SUGGESTIONS[harness] ?? "";
+    const modelSuggestion = old?.harness === harness && typeof old.model === "string" && old.model ? old.model : listed[0] ?? fallback;
+    const suggestionNote = old?.harness === harness && old.model || listed.length || !MODEL_SUGGESTIONS[harness] ? "" : " (may be outdated)";
+    if (!modelSuggestion && !ask) throw new Error(`No model suggestion for ${harness}; rerun interactively to enter a model`);
+    if (listed.length && ask) stdout.write(`${harness} models:\n${listed.map((model) => `  ${model}`).join("\n")}\n`);
+    const model = await askValueFn(`${category} model`, modelSuggestion, { ask, choices: listed, suggestionNote });
+    if (typeof model !== "string" || !model.trim()) throw new Error(`${category} model must be a non-empty string`);
+    const effortSuggestion = ["low", "medium", "high"].includes(old?.effort) ? old.effort : "";
+    const effort = await askValueFn(`${category} effort (optional)`, effortSuggestion, { ask, choices: ["low", "medium", "high"], values: ["", "low", "medium", "high"] });
+    configured[category] = { harness, model, effort };
+  }
+  const config = { chief, categories: configured, compact_percent: current.compact_percent ?? defaults.compact_percent };
+  if (!dryRun) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  }
+  return { path, config, scan };
 }
 const targets = [".claude/skills/chief/SKILL.md", ".claude/skills/chief/task_template.md", ".claude/skills/chief/ref_task_file.md", ".claude/skills/chief/ref_start_dispatch.md", ".claude/skills/chief/ref_inbox_reply.md", ".claude/skills/chief/ref_retire_ctx.md", ".claude/skills/chief/ref_quick.md", ".claude/skills/chief/ref_agy_herdr.md", ".claude/skills/worker/SKILL.md", ".claude/skills/worker/ref_signals.md", ".claude/skills/worker/ref_context_handoff.md", ".claude/skills/worker/report_format.md", ".claude/agents/chief.md", ".claude/agents/scout-code.md", ".claude/agents/scout-research.md", "scripts/chief.ts", "scripts/chief_launch.ps1", "scripts/chief_launch.sh", "worker-status-reference.md"];
 
@@ -125,37 +181,6 @@ async function confirm(prompt) {
   try { return /^y(?:es)?$/i.test((await rl.question(`${prompt} [y/N] `)).trim()); }
   finally { rl.close(); }
 }
-async function choose(label, options, fallback, ask) {
-  const usable = options.filter((option) => option.available);
-  if (!usable.length) throw new Error(`No available harness for ${label}`);
-  if (!ask) return usable.find((item) => item.value === fallback)?.value ?? usable[0].value;
-  stdout.write(`${label}:\n`);
-  usable.forEach((item, index) => stdout.write(`  ${index + 1}. ${item.title}\n`));
-  const rl = createInterface({ input: stdin, output: stdout });
-  try {
-    const answer = Number((await rl.question(`Choose [${usable.findIndex((item) => item.value === fallback) + 1 || 1}]: `)).trim());
-    return usable[(answer || usable.findIndex((item) => item.value === fallback) + 1) - 1]?.value ?? usable[0].value;
-  } finally { rl.close(); }
-}
-async function configure({ yes, reconfigure, dryRun = false, scan = scanHarnesses(), home = homedir(), approveNewerAgy = false, confirmAgyModel = confirm }) {
-  const path = join(home, ".config", "herdr", "multi-agent.config.json");
-  const current = existsSync(path) ? parseJson(readFileSync(path, "utf8"), "configuration JSON") : {};
-  const ask = !yes && (reconfigure || !existsSync(path));
-  const choices = harnesses.map((value) => ({ value, title: value, available: Boolean(scan[value]) }));
-  const chief = await choose("Chief harness", choices, current.chief ?? defaults.chief, ask);
-  const workers = await choose("Worker harness", choices, current.workers ?? defaults.workers, ask);
-  const model_fallback = { ...defaults.model_fallback, ...(current.model_fallback ?? {}) };
-  const candidateAgyModel = validateAgyModel(model_fallback.agy, true);
-  const approvedAgyModel = candidateAgyModel === "hydrogen" || approveNewerAgy || await confirmAgyModel(`Use newer agy model "${candidateAgyModel}"?`);
-  const agyModel = validateAgyModel(candidateAgyModel, approvedAgyModel);
-  if (workers === "omp") for (const tier of ["luna", "terra", "sol"]) model_fallback[tier] = validateOmpModel(model_fallback[tier], tier);
-  const config = { ...defaults, ...current, chief, workers, compact_percent: current.compact_percent ?? defaults.compact_percent, model_fallback: { ...model_fallback, agy: agyModel } };
-  if (!dryRun) {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-  }
-  return { path, config, scan };
-}
 async function installFiles(project, yes, dryRun) {
   for (const relative of targets) {
     const source = join(assets, relative);
@@ -180,10 +205,19 @@ async function installFiles(project, yes, dryRun) {
   }
 }
 function args(argv) {
-  const known = new Set(["--yes", "--dry-run", "--uninstall", "--reconfigure"]);
-  const unknown = argv.find((item) => !known.has(item));
-  if (unknown) throw new Error(`Unknown option: ${unknown}`);
-  return Object.fromEntries([...known].map((key) => [key.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), argv.includes(key)]));
+  const known = new Set(["--yes", "--dry-run", "--uninstall"]);
+  const result = { yes: false, dryRun: false, uninstall: false, reconfigure: false };
+  for (let index = 0; index < argv.length; index++) {
+    const item = argv[index];
+    if (item === "--reconfigure") {
+      const next = argv[index + 1];
+      if (next && !next.startsWith("--")) { result.reconfigure = next; index++; }
+      else result.reconfigure = true;
+    } else if (known.has(item)) result[item.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = true;
+    else throw new Error(`Unknown option: ${item}`);
+  }
+  normalizeReconfigure(result.reconfigure);
+  return result;
 }
 async function main(argv = process.argv.slice(2)) {
   const flags = args(argv);
@@ -204,22 +238,18 @@ async function main(argv = process.argv.slice(2)) {
     }
     return;
   }
-  const setup = await configure({ yes: flags.yes || flags.dryRun, reconfigure: flags.reconfigure, dryRun: flags.dryRun, approveNewerAgy: flags.yes });
-  const available = harnesses.filter((name) => setup.scan[name]);
-  const modelResult = setup.scan.omp
-    ? (process.platform === "win32" ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", "omp models"], { encoding: "utf8", windowsHide: true }) : spawnSync("omp", ["models"], { encoding: "utf8", windowsHide: true }))
-    : { status: 1, stdout: "" };
-  const modelIds = modelResult.status === 0 ? modelResult.stdout : "";
-  for (const tier of ["luna", "terra", "sol"]) {
-    const id = setup.config.model_fallback[tier];
-    if (!modelIds.includes(id)) stdout.write(`Warning: newest ${tier} model could not be resolved; using configured fallback ${id}.\n`);
-  }
+  const setup = await configure({ yes: flags.yes || flags.dryRun, reconfigure: flags.reconfigure, dryRun: flags.dryRun });
+  const available = availableHarnesses(setup.scan);
   stdout.write(`Detected harnesses: ${available.join(", ") || "none"}\n`);
-  stdout.write("Worker model ladder: luna -> terra -> sol. terra requires a written reason in the task header; sol requires explicit user request.\n");
+  if (flags.yes || flags.dryRun) stdout.write("Non-interactive setup accepts existing values or suggestions.\n");
+  stdout.write("Category selections:\n");
+  for (const category of categories) {
+    const row = setup.config.categories[category];
+    stdout.write(`  ${category}: ${row.harness} / ${row.model} / effort ${row.effort || "none"}\n`);
+  }
   stdout.write("No plugin files are changed automatically when model IDs change.\n");
-  if (setup.scan.agy) stdout.write(`agy interactive model: ${setup.config.model_fallback.agy}; select it with --model when starting the interactive session. Verify the result with a read-only worker on another harness.\n`);
   const answers = {};
-  for (const harness of [setup.config.chief, setup.config.workers]) {
+  for (const harness of new Set([setup.config.chief, ...categories.map((category) => setup.config.categories[category]?.harness).filter(Boolean)])) {
     if (answers[harness]) continue;
     answers[harness] = await writeCompaction(harness, setup.config.compact_percent, { yes: flags.yes || flags.dryRun, dryRun: flags.dryRun, home: homedir(), modelWindow: 272000 });
   }
@@ -246,5 +276,5 @@ async function writeCompaction(harness, percent, { yes, dryRun, home, modelWindo
   stdout.write(`Backup: ${backup}\n`);
   return "written";
 }
-export { args, claudeEnv, compactTokenLimit, configure, defaults, installFiles, parseJson, parseToml, parseYaml, requireAgyModelApproval, scanHarnesses, updateToml, updateYaml, validateAgyModel, validateOmpModel, writeCompaction };
+export { args, categories, claudeEnv, compactTokenLimit, configure, defaults, installFiles, modelList, MODEL_SUGGESTIONS, parseJson, parseToml, parseYaml, scanHarnesses, updateToml, updateYaml, writeCompaction };
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error.message); process.exitCode = 1; });

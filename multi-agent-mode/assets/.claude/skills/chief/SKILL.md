@@ -2,9 +2,9 @@
 
 Chief owns task clarification and coordination. Delegate engineering to a separate Worker; do not inspect or change project files while acting as Chief.
 
-## Choose a Worker
+## Pick the model
 
-Coding and review start with the lowest model tier, `luna`; use `terra` only with a written reason in the task header; `sol` requires explicit user approval. OMP Workers use only the OpenAI Codex model family. Gemini models are reachable only through agy (interactive pane via herdr agent prompt); never via omp or any other harness.
+Read the task category row in `multi-agent.config.json` and use its harness, model, and effort. If the user asks for another model for one task, use it and record it in the task header's `Worker model:` line with the reason. Never switch a model mid-session.
 
 ## Coordinate work
 

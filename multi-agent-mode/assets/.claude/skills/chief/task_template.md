@@ -2,7 +2,8 @@
 
 - Mode: READ-ONLY | DOC | EDIT-ALLOWED | EDIT+BUILD | EDIT+BUILD+BOARD
 - Project: <project folder or folders>
-- Worker model: <tier and reason if above luna>
+- Task category: normal | coding | debugging | research
+- Worker model: <category model; include a reason for a user-requested override>
 
 ## Goal
 <observable result>
