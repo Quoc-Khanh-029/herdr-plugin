@@ -10,3 +10,9 @@ id = "status"
 title = "Worker status"
 placement = "split"
 command = ["node", "index.mjs"]
+
+[[actions]]
+id = "toggle"
+title = "Toggle Worker Status"
+contexts = ["workspace"]
+command = ["node", "launch.mjs", "--toggle"]

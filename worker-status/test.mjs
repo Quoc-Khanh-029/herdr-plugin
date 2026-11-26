@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { buildRows, contextTokens, modelShort, pendingAsks, readOmpTokens, renderDashboard, stateFor } from "./index.mjs";
+import { desiredPaneColumns } from "./launch.mjs";
+import { mergeHook, parseSettings, removeHook } from "./setup.mjs";
 
 const liveAgents = [
   { name: "worker-live", agent_status: "working", pane_id: "pane-live" },
@@ -92,8 +94,8 @@ test("restores live, DONE, ASK, model, task, and context columns from configured
     const output = renderDashboard(rows, 120, new Date("2026-11-25T12:00:00Z")).join("\n");
     assert.match(output, /MODEL/);
     assert.match(output, /CTX/);
-    assert.match(output, /worke~ terra RUNNING build-widget\s+60k/);
-    assert.match(output, /worke~ sonn~ DONE\s+review-widget/);
+    assert.match(output, /worker-live\s+terra\s+RUNNING\s+build-widget\s+60k/);
+    assert.match(output, /worker-done\s+sonnet\s+DONE\s+review-widget/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -124,22 +126,39 @@ test("shows TESTING only for a BOARD worker with a matching live process", () =>
   assert.match(renderDashboard([{ name: "w-1", model: "luna", state: "TESTING", task: "board-run", tokens: "-" }], 80, new Date(), true)[2], /\x1b\[35mTESTING/);
 });
 
-test("uses fixed-width columns and keeps every visible line inside the pane", () => {
+test("uses proportional columns, one-line rows, and clipped tasks", () => {
   const rows = [
-    { name: "worker-123456", model: "verylongmodel", state: "RUNNING", task: "a-very-long-task-name-that-must-never-wrap", tokens: "12345678k" },
+    { name: "worker-123456", model: "verylongmodel", state: "RUNNING", task: "a-very-long-task-name-that-must-never-wrap-and-remains-one-line-at-one-hundred-twenty-columns", tokens: "12345678k" },
     { name: "worker-b", model: "luna", state: "IDLE", task: "read", tokens: "-" },
     { name: "worker-c", model: "terra", state: "BLOCKED", task: "another-very-long-task-name", tokens: "1234k" },
   ];
-  for (const width of [51, 60, 80]) {
+  const weights = [1, 1, 2, 5, 1];
+  for (const width of [51, 60, 80, 120]) {
     const lines = renderDashboard(rows, width, new Date("2026-11-25T12:00:00Z"));
+    const header = lines[1];
+    const starts = ["#", "MODEL", "STATE", "TASK", "CTX"].map((name) => header.indexOf(name));
+    const widths = starts.map((start, index) => index === starts.length - 1 ? header.length - start : starts[index + 1] - start - 1);
+    const total = widths.reduce((sum, value) => sum + value, 0);
+    const units = widths.map((value, index) => value / weights[index]);
+    assert.equal(total, width - 5, `column widths at ${width}`);
+    assert.ok(widths.every((value) => value >= 1), `column narrower than one at width ${width}`);
+    assert.ok(total <= width - 1, `columns exceed ${width - 1} at width ${width}`);
+    assert.equal(widths[3], width - 5 - widths[0] - widths[1] - widths[2] - widths[4]);
+    assert.ok(Math.max(...units) - Math.min(...units) <= 1, `column ratios drift at width ${width}: ${widths}`);
     assert.ok(lines.every((line) => line.length <= width - 1), `line exceeds ${width - 1} columns at width ${width}`);
-    assert.equal(lines[1].slice(0, 27).trimEnd(), "#      MODEL STATE   TASK");
-    assert.match(lines[2], /^worke~ very~ RUNNING /);
-    if (width < 80) assert.match(lines[2], /\.\.\.\s+999k\+$/);
-    else assert.match(lines[2], /never-wrap\s+999k\+$/);
-    assert.match(lines[3], / {4}-$/);
+    assert.match(lines[2], /^work/);
+    assert.match(lines[2], /\bRUNNING\b/);
+    assert.match(lines[2], /\.\.\.\s+999k\+$/);
+    assert.match(lines[3], /\s-$/);
   }
 });
+test("sizes the pane from terminal/tab ratios with a 60-column floor", () => {
+  assert.equal(desiredPaneColumns(154, 180, 0.2), 60);
+  assert.equal(desiredPaneColumns(400, 500, 0.2), 132);
+  assert.equal(desiredPaneColumns(400, 900, 0.2), 180);
+  assert.equal(desiredPaneColumns(50, 60, 0.2), 50);
+});
+
 
 test("retains generic Herdr-only fallback with no configured ledger", () => {
   const rows = buildRows([{ name: "agent-a", agent_status: "working" }, { name: "agent-b", agent_status: "blocked" }], [], {
@@ -158,7 +177,7 @@ test("actual pane entrypoint displays generic Herdr-only data without a ledger",
       { name: "agent-a", agent_status: "working" },
       { name: "idle-agent", agent_status: "idle" },
     ] } });
-    const env = { ...process.env };
+    const env = { ...process.env, HERDR_PANE_ID: "" };
     delete env.WORKER_STATUS_LEDGER;
     delete env.WORKER_STATUS_INBOX;
     delete env.WORKER_STATUS_POINTERS;
@@ -167,8 +186,8 @@ test("actual pane entrypoint displays generic Herdr-only data without a ledger",
       fileURLToPath(new URL("./index.mjs", import.meta.url)), "--once", "--agents-json", agentsPath,
     ], { encoding: "utf8", windowsHide: true, env });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /agent~ \?     RUNNING \(no task\).*-/);
-    assert.match(result.stdout, /idle-~ \?     IDLE    \(no task\).*-/);
+    assert.match(result.stdout, /agent-a\s+\?\s+RUNNING\s+\(no task\)\s+-/);
+    assert.match(result.stdout, /idle-agent\s+\?\s+IDLE\s+\(no task\)\s+-/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -206,12 +225,12 @@ test("runs the pane entrypoint against fixture Herdr, ledger, inbox and context 
       fileURLToPath(new URL("./index.mjs", import.meta.url)), "--once",
       "--agents-json", agentsPath, "--ledger", ledgerPath, "--inbox", join(dir, "inbox"),
       "--pointers", pointersPath, "--ctx-dir", join(dir, "ctx"), "--footer-fixture", footerPath,
-    ], { encoding: "utf8", windowsHide: true });
+    ], { encoding: "utf8", windowsHide: true, env: { ...process.env, HERDR_PANE_ID: "" } });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /worke~ terra RUNNING build-widget\s+60k/);
-    assert.match(result.stdout, /worke~ sonn~ DONE\s+review-widget/);
-    assert.match(result.stdout, /worke~ luna  ASK\s+wait-for-input/);
-    assert.match(result.stdout, /worke~ luna  IDLE\s+read-docs\s+79k/);
+    assert.match(result.stdout, /worker-li~\s+terra\s+RUNNING\s+build-widget\s+60k/);
+    assert.match(result.stdout, /worker-do~\s+sonnet\s+DONE\s+review-widget/);
+    assert.match(result.stdout, /worker-ask\s+luna\s+ASK\s+wait-for-input/);
+    assert.match(result.stdout, /worker-ctx\s+luna\s+IDLE\s+read-docs\s+79k/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -225,4 +244,20 @@ test("maps Herdr state values without optional source data", () => {
 
 test("shows an empty agent set explicitly", () => {
   assert.match(renderDashboard([], 80).join("\n"), /No agents found/);
+});
+
+test("merges the Chief-start hook idempotently and removes only its exact hook", () => {
+  const original = { hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: "keep" }] }] }, permissions: { allow: ["x"] } };
+  const once = mergeHook(original, "/tmp/worker-status/launch.mjs");
+  const twice = mergeHook(once, "/tmp/worker-status/launch.mjs");
+  assert.deepEqual(twice, once);
+  assert.equal(once.hooks.SessionStart.length, 2);
+  const removed = removeHook(once, "/tmp/worker-status/launch.mjs");
+  assert.deepEqual(removed, original);
+});
+
+test("refuses invalid settings JSON without changing the fixture", () => {
+  const invalid = "{";
+  assert.throws(() => parseSettings(invalid), /Refusing to edit invalid settings JSON/);
+  assert.equal(invalid, "{");
 });

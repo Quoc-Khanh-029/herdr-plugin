@@ -227,28 +227,59 @@ function truncateTask(value, width) {
   return width <= 3 ? ".".repeat(width) : `${chars.slice(0, width - 3).join("")}...`;
 }
 
-function contextColumn(value) {
+function contextColumn(value, width = 5) {
   const text = String(value ?? "-");
-  if (text === "-") return text.padStart(5);
+  if (text === "-") return text.padStart(width);
   const amount = Number.parseInt(text, 10);
-  return Number.isFinite(amount) && amount > 999 ? "999k+" : text.padStart(5);
+  const display = Number.isFinite(amount) && amount > 999 ? "999k+" : text;
+  return display.padStart(width);
+}
+
+function dashboardColumnWidths(width) {
+  const total = Math.max(5, Math.floor(width) - 5);
+  const widths = [
+    Math.max(1, Math.round(total / 10)),
+    Math.max(1, Math.round(total / 10)),
+    Math.max(1, Math.round(total * 2 / 10)),
+    1,
+    Math.max(1, Math.round(total / 10)),
+  ];
+  widths[3] = Math.max(1, total - widths[0] - widths[1] - widths[2] - widths[4]);
+  return widths;
+}
+
+// Herdr's measured 60-column pane rect has a 57-column drawable PTY viewport.
+function livePaneWidth() {
+  const paneId = process.env.HERDR_PANE_ID;
+  if (!paneId) return 0;
+  try {
+    const output = execFileSync(process.env.HERDR_BIN_PATH || "herdr", ["pane", "layout", "--pane", paneId], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 1500,
+    });
+    const layout = JSON.parse(output).result?.layout;
+    const width = layout?.panes?.find((pane) => pane.pane_id === paneId)?.rect?.width;
+    return Number.isFinite(width) && width > 0 ? Math.max(1, Math.floor(width) - 3) : 0;
+  } catch { return 0; }
+}
+
+function terminalWidth() {
+  const paneWidth = livePaneWidth();
+  if (paneWidth) return paneWidth;
+  const reported = Number(process.stdout.columns || process.env.COLUMNS);
+  return Number.isFinite(reported) && reported > 0 ? Math.floor(reported) : 100;
 }
 
 function renderDashboard(rows, width = 100, now = new Date(), color = false) {
-  const nameWidth = 6;
-  const modelWidth = 5;
-  const stateWidth = 7;
-  const tokenWidth = 5;
-  const taskWidth = Math.max(8, width - 28);
+  const [nameWidth, modelWidth, stateWidth, taskWidth, tokenWidth] = dashboardColumnWidths(width);
   const cell = (value, size) => truncate(value, size);
   const header = `WORKER STATUS ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`;
-  const lines = [truncate(header, width - 1).trimEnd(), [cell("#", nameWidth), cell("MODEL", modelWidth), cell("STATE", stateWidth), cell("TASK", taskWidth), "CTX".padStart(tokenWidth)].join(" ")];
+  const lines = [truncate(header, width - 1).trimEnd(), [cell("#", nameWidth), cell("MODEL", modelWidth), cell("STATE", stateWidth), cell("TASK", taskWidth), cell("CTX", tokenWidth)].join(" ")];
   if (!rows.length) lines.push(truncate("No agents found", width - 1).trimEnd());
   for (const row of rows) {
     let state = cell(row.state, stateWidth);
     const colorCode = row.state === "TESTING" ? 35 : row.state === "RUNNING" ? 33 : row.state === "IDLE" ? 36 : row.state === "DONE" ? 32 : 31;
     if (color) state = `\x1b[${colorCode}m${state}\x1b[0m`;
-    lines.push([cell(row.name, nameWidth), cell(row.model, modelWidth), state, truncateTask(row.task, taskWidth), contextColumn(row.tokens)].join(" "));
+    lines.push([cell(row.name, nameWidth), cell(row.model, modelWidth), state, truncateTask(row.task, taskWidth), contextColumn(row.tokens, tokenWidth)].join(" "));
   }
   return lines;
 }
@@ -294,7 +325,7 @@ function run(options) {
         footerTokens,
         processes: readProcesses(options),
       });
-      const lines = renderDashboard(rows, process.stdout.columns || 100, new Date(), process.stdout.isTTY && !options.noColor);
+      const lines = renderDashboard(rows, terminalWidth(), new Date(), process.stdout.isTTY && !options.noColor);
       for (const warning of [ledger.warning, inbox.warning].filter(Boolean)) lines.push(warning);
       draw(lines, !options.once);
     } catch (error) {

@@ -1,80 +1,27 @@
 # Worker Status
 
-A standalone Herdr community plugin that opens a live pane showing agents returned by Herdr. It runs without this repository, a Chief ledger, network access, or model calls.
+A standalone Herdr plugin that shows live agent state. It runs without this repository, a Chief ledger, network access, or model calls.
 
-## Requirements
+## Quick start
 
-- Herdr 0.9.0 or newer, for the plugin manifest and pane API.
-- Node.js 20 or newer; no npm packages or build step.
+1. Install: `herdr plugin install Quoc-Khanh-029/herdr-plugin/worker-status`.
+2. From a Herdr pane, run `node setup.mjs` to enable and open a right-side pane at about one-third width.
+3. Optional Chief-start auto-open: `node setup.mjs --hook` (review the printed diff and rerun with `--yes`).
+4. Use `herdr plugin action invoke community.worker-status.toggle` to toggle the pane; `node setup.mjs --toggle` does the same.
+5. Chief environment settings are in `chief_tasks/sessions.json`, `chief_tasks/inbox`, `chief_tasks/inbox/pointers.json`, and `~/.claude/ctx`; configure them only when those sources exist.
 
-The pane calls `HERDR_BIN_PATH agent list` (falling back to `herdr` when Herdr does not provide that variable). It uses the returned agent names and `agent_status` values. Herdr is the source of truth for agent state.
+Requirements: Herdr 0.9.0 or newer and Node.js 20 or newer. No npm packages or build step.
 
-## Install and run
+## Behavior
 
-For local development, link this directory (this registers a plugin globally for the current Herdr user):
+The pane calls `HERDR_BIN_PATH agent list` (falling back to `herdr`) and displays Herdr's agent names and states. It uses optional paths passed by the launcher for Chief-specific model, task, ASK, and context columns. Missing sources are not inferred. The Chief-start hook runs only in Chief sessions, on `startup` and `resume`, and leaves existing settings hooks intact. `node setup.mjs --unhook` removes only this launcher's hook.
 
-```sh
-herdr plugin link /absolute/path/to/plugins/worker-status
-herdr plugin pane open --plugin community.worker-status --entrypoint status
-```
-
-To remove the local registration later, run `herdr plugin unlink community.worker-status`. Herdr links are per-user and available in every session; review `herdr plugin link --help` and the manifest before linking. The plugin pane is configured as a split.
-
-## Chief user-scope installation
-
-The installed user-scope copy lives at `C:\Users\<user>\.claude\worker-status\plugin`; the launcher is `C:\Users\<user>\.claude\worker-status\launch.mjs`. Copy the plugin directory there and run:
-
-```powershell
-herdr plugin link "$HOME\.claude\worker-status\plugin" --enabled
-```
-
-One `SessionStart` hook in the user's `~/.claude/settings.json` invokes the launcher for `startup` and `resume`. The launcher accepts only Chief sessions, returns immediately after starting detached pane setup, and exits silently for non-Chiefs. Pane discovery is limited to the Chief tab; an existing `worker-status` pane prevents another from opening. New panes open as a right split using the Chief pane's cwd. If that cwd has `chief_tasks/sessions.json`, matching ledger, inbox, pointer, and context paths are passed to the pane. Otherwise the pane receives no Chief paths and lists Herdr agents only.
-
-The launcher's installation folder is independent of the project. Its pane uses the plugin copy under the user profile and derives its optional Chief data from the active Chief's project cwd.
-
-PowerShell from the repository root:
-
-```powershell
-herdr plugin link (Resolve-Path .\plugins\worker-status).Path
-herdr plugin pane open --plugin community.worker-status --entrypoint status
-```
-
-On macOS/Linux, pass the absolute plugin directory to the same `herdr plugin link` command. The manifest enables all three platforms; each needs `node` available on `PATH`.
-
-For publishing, put the plugin directory in a public GitHub repository and install it with `herdr plugin install owner/repo/worker-status`. Do not use `--yes` for an unreviewed source.
-
-## Operation and optional Chief data
-
-With no optional data configured, the pane lists Herdr agents and their current Herdr states; model, task and context cells show `?`, `(no task)` and `-`. It does not search for Chief files.
-
-To restore the existing dashboard's Chief-specific columns, explicitly configure `WORKER_STATUS_LEDGER` with a JSON ledger containing `sessions`. Only sessions marked `live` are shown. Their `model`, `model_note` or `tier` field supplies MODEL; the latest running task (or final task) supplies TASK and DONE state. A ledger load error is shown as a warning and falls back to Herdr-only data.
-
-Pending ASK/BLOCKED signals require `WORKER_STATUS_INBOX`, set to a YYYY-MM-DD inbox file or a directory of such files. The newest signal per source agent determines whether ASK is active. Set `WORKER_STATUS_POINTERS` to the associated pointer JSON to honor acknowledgements; without pointers, a current ASK/BLOCKED signal is treated as pending. A DONE signal supersedes an older ASK. Set these environment variables before launching Herdr so the pane inherits them. For local testing, the equivalent pane-command options are `--ledger`, `--inbox`, `--pointers`, and `--ctx-dir` (set them in the manifest command).
-
-```powershell
-$env:WORKER_STATUS_LEDGER = 'C:\\path\\to\\chief_tasks\\sessions.json'
-$env:WORKER_STATUS_INBOX = 'C:\\path\\to\\chief_tasks\\inbox'
-$env:WORKER_STATUS_POINTERS = 'C:\\path\\to\\chief_tasks\\inbox\\pointers.json'
-$env:WORKER_STATUS_CTX_DIR = 'C:\\path\\to\\context'
-```
-
-Set `WORKER_STATUS_CTX_DIR` to a directory of context JSON files named for Herdr's `agent_session.value`; numeric `used_tokens` values are displayed in rounded thousands for non-OMP sessions. For ledger sessions with `runtime = "omp"`, the plugin best-effort reads the mapped agent pane's last four terminal lines through `HERDR_BIN_PATH pane read` and estimates tokens from a `percent/windowK` footer. This footer is terminal output, can be absent or change format, and then displays `-`. OMP pane output is read only when an explicitly configured, valid ledger identifies the session as live and `runtime = "omp"`.
-For a live `BOARD` task, any matching Windows `Win32_Process.CommandLine` (`fleet_test.py run`, `rtt_fleet.py` or `logic2_capture.py`) sets the row to purple `TESTING`, overriding ASK, RUNNING and IDLE regardless of ASK timing. Ledger task states `BLOCKED` and `FAILED` take precedence. A pending ASK remains pending when the visible row becomes TESTING; the matching command is not proven to belong to that Worker.
-
-The plugin reads only the paths explicitly configured above. It makes no task, context-token, model or inbox claims when the corresponding source is absent. It does not transmit data, make network requests, or invoke a model. Herdr does not sandbox third-party plugin commands, so inspect the source before installing.
+The launcher opens one right-side Worker Status pane per tab and reapplies its size on open. Width is the greater of 33% of the tab, `WORKER_STATUS_WIDTH_FRACTION` of the estimated whole terminal (default `0.2`), and 60 columns, capped at the tab width. The renderer keeps each row on one line and clips long tasks with `...`. `setup.mjs`, the toggle action, and the Chief-start hook use the same launcher and inherit this environment variable.
 
 ## Tests
 
-From this directory, run:
+Run `node test.mjs` from this directory. Tests cover dashboard rendering, source precedence, fixture-driven pane output, and hook merge/idempotence/removal/invalid-JSON behavior.
 
-```sh
-node --test test.mjs
-```
+## Marketplace
 
-The tests cover live/working, DONE, pending and acknowledged ASK, blocked, model-name fallbacks, ledger task selection, context-file tokens, OMP footer estimates, no-ledger fallback, inbox precedence, and both fixture-driven pane-entrypoint paths.
-
-## Marketplace and contributions
-
-Marketplace discovery is automatic and unreviewed. To request discovery, add the GitHub topic `herdr-plugin` to the public repository's default branch and keep a parseable `herdr-plugin.toml` manifest in the plugin directory. Herdr refreshes the index periodically; adding the topic does not mean the plugin has been reviewed or published by Herdr.
-
-Contributions should preserve the no-network/no-model runtime, support Windows/macOS/Linux, and include focused deterministic tests. No online listing or publication is claimed for this package.
+For automatic marketplace discovery, add the GitHub topic `herdr-plugin` to the public repository's default branch and retain a parseable `herdr-plugin.toml` in the plugin directory. Herdr refreshes its index periodically; discovery is not review or endorsement. Inspect plugin source before installing; Herdr does not sandbox third-party commands.
