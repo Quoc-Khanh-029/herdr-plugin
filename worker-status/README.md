@@ -3,14 +3,37 @@
 A standalone Herdr plugin that shows live agent state. It runs without this repository, a Chief ledger, network access, or model calls.
 
 ## Quick start
-
-1. Install: `herdr plugin install Quoc-Khanh-029/herdr-plugin/worker-status`.
-2. From a Herdr pane, run `node setup.mjs` to enable and open a right-side pane at about one-third width.
-3. Optional Chief-start auto-open: `node setup.mjs --hook` (review the printed diff and rerun with `--yes`).
-4. Use `herdr plugin action invoke community.worker-status.toggle` to toggle the pane; `node setup.mjs --toggle` does the same.
-5. Chief environment settings are in `chief_tasks/sessions.json`, `chief_tasks/inbox`, `chief_tasks/inbox/pointers.json`, and `~/.claude/ctx`; configure them only when those sources exist.
+1. Install: `herdr plugin install Quoc-Khanh-029/herdr-plugin/worker-status`; from the installed `worker-status` directory in a Herdr pane, run `node setup.mjs` to enable and open a right-side pane at about one-third width.
+2. Optional Chief-start auto-open: `node setup.mjs --hook` (review the printed diff and rerun with `--yes`).
+3. Use `herdr plugin action invoke community.worker-status.toggle` to toggle the pane; `node setup.mjs --toggle` does the same.
+4. Chief environment settings are in `chief_tasks/sessions.json`, `chief_tasks/inbox`, `chief_tasks/inbox/pointers.json`, and `~/.claude/ctx`; configure them only when those sources exist.
 
 Requirements: Herdr 0.9.0 or newer and Node.js 20 or newer. No npm packages or build step.
+
+## Upgrading
+
+For v1 / ver1.0, use this safe reinstall path:
+1. Run `herdr plugin uninstall community.worker-status`.
+2. Run `herdr plugin install Quoc-Khanh-029/herdr-plugin/worker-status`.
+3. Run `herdr server reload-config`.
+4. From the installed `worker-status` directory in a Herdr pane, run `node setup.mjs`.
+
+Your Herdr config keybindings and Chief-start hook remain. Rerun `node setup.mjs --hook` only if the launcher path changed; review the diff, then rerun with `--yes`.
+
+## Keyboard shortcut
+
+Use `ctrl+shift+m` directly or `prefix+m` after your configured prefix to toggle the pane (open if absent; close if present). Check active bindings with `prefix+?`; choose unused keys, then run `herdr server reload-config`.
+Keys are not installed automatically. Append the TOML below to `~/.config/herdr/config.toml` (Linux/macOS) or `%APPDATA%\herdr\config.toml` (Windows; `herdr --help` prints the resolved path).
+
+    [[keys.command]]
+    key = "ctrl+shift+m"
+    type = "plugin_action"
+    command = "community.worker-status.toggle"
+
+    [[keys.command]]
+    key = "prefix+m"
+    type = "plugin_action"
+    command = "community.worker-status.toggle"
 
 ## Behavior
 
