@@ -136,14 +136,21 @@ test("uses proportional columns, one-line rows, and clipped tasks", () => {
   for (const width of [51, 60, 80, 120]) {
     const lines = renderDashboard(rows, width, new Date("2026-11-25T12:00:00Z"));
     const header = lines[1];
-    const starts = ["#", "MODEL", "STATE", "TASK", "CTX"].map((name) => header.indexOf(name));
-    const widths = starts.map((start, index) => index === starts.length - 1 ? header.length - start : starts[index + 1] - start - 1);
-    const total = widths.reduce((sum, value) => sum + value, 0);
+    const starts = ["#", "MODEL", "STATE", "TASK"].map((name) => header.indexOf(name));
+    const total = width - 5;
+    const tokenWidth = Math.max(1, Math.round(total / 10));
+    const widths = [
+      starts[1] - starts[0] - 1,
+      starts[2] - starts[1] - 1,
+      starts[3] - starts[2] - 1,
+      total - (starts[1] - starts[0] - 1) - (starts[2] - starts[1] - 1) - (starts[3] - starts[2] - 1) - tokenWidth,
+      tokenWidth,
+    ];
     const units = widths.map((value, index) => value / weights[index]);
-    assert.equal(total, width - 5, `column widths at ${width}`);
+    assert.equal(header.indexOf("CTX") + 3, header.length, `header CTX right edge at ${width}`);
+    assert.equal(widths.reduce((sum, value) => sum + value, 0), total, `column widths at ${width}`);
     assert.ok(widths.every((value) => value >= 1), `column narrower than one at width ${width}`);
-    assert.ok(total <= width - 1, `columns exceed ${width - 1} at width ${width}`);
-    assert.equal(widths[3], width - 5 - widths[0] - widths[1] - widths[2] - widths[4]);
+    assert.equal(widths[3], total - widths[0] - widths[1] - widths[2] - widths[4]);
     assert.ok(Math.max(...units) - Math.min(...units) <= 1, `column ratios drift at width ${width}: ${widths}`);
     assert.ok(lines.every((line) => line.length <= width - 1), `line exceeds ${width - 1} columns at width ${width}`);
     assert.match(lines[2], /^work/);
@@ -151,6 +158,42 @@ test("uses proportional columns, one-line rows, and clipped tasks", () => {
     assert.match(lines[2], /\.\.\.\s+999k\+$/);
     assert.match(lines[3], /\s-$/);
   }
+});
+
+test("right-aligns CTX values at the right edge at every supported width", () => {
+  const values = ["88k", "104k", "999k", "1.2M", "9k", "0", "-", ""];
+  const rows = values.map((tokens, index) => ({
+    name: `worker-${index + 1}`, model: "luna", state: "IDLE", task: "read", tokens,
+  }));
+  for (const width of [51, 60, 80, 120]) {
+    const lines = renderDashboard(rows, width, new Date("2026-11-26T12:00:00Z"));
+    assert.equal(lines[1].indexOf("CTX") + 3, lines[1].length, `header CTX edge at ${width}`);
+    for (let index = 0; index < values.length; index++) {
+      assert.equal(lines[index + 2].length, width - 1, `row width at ${width}`);
+      if (values[index] === "") {
+        const tokenWidth = Math.max(1, Math.round((width - 5) / 10));
+        assert.equal(lines[index + 2].slice(-tokenWidth), " ".repeat(tokenWidth));
+      } else {
+        assert.ok(lines[index + 2].endsWith(values[index]), `CTX value at ${width}: ${values[index]}`);
+      }
+    }
+  }
+});
+
+test("borrows TASK width for wide CTX values without overflowing", () => {
+  const long = "very-long-context-value";
+  const row = { name: "worker-a", model: "luna", state: "IDLE", task: "read-the-long-task", tokens: long };
+  for (const width of [51, 60, 80, 120]) {
+    const lines = renderDashboard([row], width, new Date("2026-11-26T12:00:00Z"));
+    assert.equal(lines[1].indexOf("CTX") + 3, lines[1].length, `header CTX edge at ${width}`);
+    assert.equal(lines[2].length, width - 1, `row width at ${width}`);
+    assert.ok(lines[2].endsWith(long), `wide CTX retained at ${width}`);
+  }
+  const narrow = renderDashboard([{ ...row, tokens: "123k+" }], 20, new Date("2026-11-26T12:00:00Z"));
+  assert.equal(narrow[1].indexOf("CTX") + 3, narrow[1].length);
+  assert.equal(narrow[2].length, 19);
+  assert.ok(narrow[2].endsWith("123k+"));
+  assert.equal(narrow[2].slice(10, 13), "...");
 });
 test("sizes the pane from terminal/tab ratios with a 60-column floor", () => {
   assert.equal(desiredPaneColumns(154, 180, 0.2), 60);

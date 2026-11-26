@@ -227,12 +227,19 @@ function truncateTask(value, width) {
   return width <= 3 ? ".".repeat(width) : `${chars.slice(0, width - 3).join("")}...`;
 }
 
-function contextColumn(value, width = 5) {
+function contextText(value) {
   const text = String(value ?? "-");
-  if (text === "-") return text.padStart(width);
+  if (text === "-") return text;
   const amount = Number.parseInt(text, 10);
-  const display = Number.isFinite(amount) && amount > 999 ? "999k+" : text;
-  return display.padStart(width);
+  return Number.isFinite(amount) && amount > 999 ? "999k+" : text;
+}
+
+function contextColumn(value, width = 5) {
+  const display = contextText(value);
+  const visible = display.length > width
+    ? width <= 1 ? "~" : `~${display.slice(-(width - 1))}`
+    : display;
+  return visible.padStart(width);
 }
 
 function dashboardColumnWidths(width) {
@@ -270,10 +277,15 @@ function terminalWidth() {
 }
 
 function renderDashboard(rows, width = 100, now = new Date(), color = false) {
-  const [nameWidth, modelWidth, stateWidth, taskWidth, tokenWidth] = dashboardColumnWidths(width);
+  const [nameWidth, modelWidth, stateWidth, baseTaskWidth, baseTokenWidth] = dashboardColumnWidths(width);
+  let requiredTokenWidth = 3;
+  for (const row of rows) requiredTokenWidth = Math.max(requiredTokenWidth, contextText(row.tokens).length);
+  const borrowedWidth = Math.min(Math.max(0, requiredTokenWidth - baseTokenWidth), Math.max(0, baseTaskWidth - 1));
+  const taskWidth = baseTaskWidth - borrowedWidth;
+  const tokenWidth = baseTokenWidth + borrowedWidth;
   const cell = (value, size) => truncate(value, size);
   const header = `WORKER STATUS ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}`;
-  const lines = [truncate(header, width - 1).trimEnd(), [cell("#", nameWidth), cell("MODEL", modelWidth), cell("STATE", stateWidth), cell("TASK", taskWidth), cell("CTX", tokenWidth)].join(" ")];
+  const lines = [truncate(header, width - 1).trimEnd(), [cell("#", nameWidth), cell("MODEL", modelWidth), cell("STATE", stateWidth), cell("TASK", taskWidth), contextColumn("CTX", tokenWidth)].join(" ")];
   if (!rows.length) lines.push(truncate("No agents found", width - 1).trimEnd());
   for (const row of rows) {
     let state = cell(row.state, stateWidth);
