@@ -1,0 +1,12 @@
+id = "community.multi-agent-mode"
+name = "Multi-Agent Mode"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Install generic Chief and Worker orchestration files into a project"
+platforms = ["linux", "macos", "windows"]
+
+[[actions]]
+id = "setup"
+title = "Install Multi-Agent Mode"
+contexts = ["workspace"]
+command = ["node", "setup.mjs"]
