@@ -3,7 +3,7 @@ import { delimiter } from "node:path";
 import { chiefNameForWorkspace, isChiefName, isWorkerName, slug } from "./assets/scripts/chief_name.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import { args, categories, claudeEnv, configure, MODEL_SUGGESTIONS, parseJson, p
 const root = dirname(fileURLToPath(import.meta.url));
 function fixture() { return mkdtempSync(join(tmpdir(), "multi-agent-mode-")); }
 const fakeHerdrDir = join(root, "..", "test", "fixtures", "fake-herdr");
+if (process.platform !== "win32") chmodSync(join(fakeHerdrDir, "herdr"), 0o755);
 const packagedChiefName = join(root, "assets", "scripts", "chief_name.mjs");
 function testEnv(home, fixtureEnv) {
   return {
