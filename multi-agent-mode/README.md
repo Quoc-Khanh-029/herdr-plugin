@@ -5,14 +5,16 @@ Multi-Agent Mode installs generic Chief and Worker role files into the current p
 ## Quick Start
 
 1. Install: `herdr plugin install Quoc-Khanh-029/herdr-plugin/multi-agent-mode`.
-2. In the target workspace, invoke setup with `herdr plugin action invoke community.multi-agent-mode.setup`; this runs `node setup.mjs`.
-3. Review each file diff; approve the prompt or rerun setup with `--yes` for all replacements.
-4. Configure the Chief harness and each task category's Worker harness, model, and optional effort.
-5. Open Herdr, then start Chief in a pane rooted at the target workspace with the launcher below.
+2. In the target workspace, invoke setup with `herdr plugin action invoke community.multi-agent-mode.setup`; this runs `node setup.mjs`. Review the diffs and configure harnesses.
+3. Open Herdr at the target project.
+4. In the project root, run `chief init` once to create missing task/report files (or `node scripts/chief.ts init` if the kit command is unavailable).
+5. Start Chief in a Herdr pane with `chief` if installed, or use `.\scripts\chief_launch.ps1` (PowerShell) / `./scripts/chief_launch.sh` (Git Bash).
 
 ## Start Chief
 
-In Herdr, open a pane at the target workspace and run `.\scripts\chief_launch.ps1` (PowerShell) or `./scripts/chief_launch.sh` (Git Bash). Both launch Claude Code as `claude --agent chief`.
+In a Herdr pane rooted at the target workspace, `chief` (when provided by the user's shell kit) or either project launcher starts Claude Code as `claude --agent chief`. The launcher names the pane `chief-<workspace>` using the Herdr workspace label, applying the documented slug rule; it renames missing or legacy names, leaves the matching name unchanged, and labels the Chief tab `chief`. Without `HERDR_ENV`, it starts Claude and prints that the name was not set.
+
+The plugin intentionally ships project launchers rather than a global `chief` shell command. `chief init` is provided by the user's shell kit; use `node scripts/chief.ts init` when that command is unavailable. When the project has no `scripts/` directory, use the user's shell-kit `chief` command: it detects the `chief_tasks/sessions.json` project and falls back to the kit's `bin/chief_launch.ps1` (PowerShell) or `bin/chief_launch.sh` (Git Bash). The project-local launcher commands above are available only after setup creates those files.
 
 ## Models
 

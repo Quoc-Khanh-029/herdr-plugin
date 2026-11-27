@@ -1,6 +1,2 @@
 #!/bin/sh
-if [ "$1" = "agent" ] && [ "$2" = "list" ]; then
-  printf '%s\n' '{"agents":[{"name":"chief","runtime":"claude"},{"name":"worker","runtime":"omp"}]}'
-  exit 0
-fi
-exit 0
+exec node "$(dirname "$0")/herdr-fixture.cjs" "$@"

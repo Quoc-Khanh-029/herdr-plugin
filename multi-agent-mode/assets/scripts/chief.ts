@@ -1,4 +1,4 @@
-const { appendFileSync, mkdirSync, readFileSync } = require("node:fs");
+const { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -16,6 +16,29 @@ function option(args, name) {
 }
 function main(argv) {
   const [command, ...args] = argv;
+  if (command === "init") {
+    const tasks = join(root, "chief_tasks");
+    const ledgerPath = join(tasks, "sessions.json");
+    const markdownPath = join(tasks, "sessions.md");
+    const created = [];
+    mkdirSync(join(tasks, "inbox"), { recursive: true });
+    mkdirSync(join(root, "worker_report"), { recursive: true });
+    let ledger = { sessions: [] };
+    if (existsSync(ledgerPath)) {
+      ledger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+      if (!Array.isArray(ledger.sessions)) throw new Error("chief_tasks/sessions.json exists but is not a ledger; init does not touch it");
+    } else {
+      writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      created.push("chief_tasks/sessions.json");
+    }
+    if (!existsSync(markdownPath)) {
+      const rows = ledger.sessions.map((session) => `- ${session.name}: ${session.status ?? "unknown"} (${session.pane ?? "pane not recorded"})`).join("\n");
+      writeFileSync(markdownPath, `# Worker session ledger\n\nGenerated from \`sessions.json\`; do not hand-edit.\n\n${rows || "No Worker sessions yet."}\n`, { encoding: "utf8", flag: "wx" });
+      created.push("chief_tasks/sessions.md");
+    }
+    process.stdout.write(`${JSON.stringify({ ok: true, created, kept_sessions: ledger.sessions.length })}\n`);
+    return;
+  }
   if (command === "status") {
     const raw = run(["agent", "list"]);
     process.stdout.write(`${JSON.stringify(JSON.parse(raw), null, 2)}\n`);
@@ -38,7 +61,7 @@ function main(argv) {
     appendFileSync(file, `\n## ${kind} ${taskId} from ${process.env.HERDR_AGENT_NAME || "worker"}\n\n${text.trim()}\n`, "utf8");
     const parsed = JSON.parse(run(["agent", "list"]));
     const agents = parsed.agents ?? parsed.result?.agents ?? [];
-    const chief = agents.find((agent) => agent.name === "chief");
+    const chief = agents.find((agent) => /^chief(?:-.+)?$/.test(agent.name || "") || ["staff", "staff-gemini"].includes(agent.name));
     if (chief?.name) run(["agent", "prompt", chief.name, `${kind} ${taskId}: see ${file}`]);
     process.stdout.write(`${file}\n`);
     return;
@@ -48,7 +71,7 @@ function main(argv) {
     process.stdout.write(`${file}\n`);
     return;
   }
-  throw new Error("Usage: node scripts/chief.ts <status|prompt|signal|config> ...");
+  throw new Error("Usage: node scripts/chief.ts <init|status|prompt|signal|config> ...");
 }
 try { main(process.argv.slice(2)); }
 catch (error) { console.error(error.message); process.exitCode = 1; }

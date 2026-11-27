@@ -1,12 +1,39 @@
+import { spawnSync } from "node:child_process";
+import { delimiter } from "node:path";
+import { chiefNameForWorkspace, isChiefName, isWorkerName, slug } from "./assets/scripts/chief_name.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { args, categories, claudeEnv, configure, MODEL_SUGGESTIONS, parseJson, parseToml, parseYaml, updateToml, updateYaml, writeCompaction } from "./setup.mjs";
 const root = dirname(fileURLToPath(import.meta.url));
 function fixture() { return mkdtempSync(join(tmpdir(), "multi-agent-mode-")); }
+const fakeHerdrDir = join(root, "..", "test", "fixtures", "fake-herdr");
+const packagedChiefName = join(root, "assets", "scripts", "chief_name.mjs");
+function testEnv(home, fixtureEnv) {
+  return {
+    PATH: `${fakeHerdrDir}${delimiter}${process.env.PATH ?? ""}`,
+    HOME: home,
+    USERPROFILE: home,
+    ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+    TEMP: home,
+    ...fixtureEnv,
+  };
+}
+function runFakeChiefName({ label, folder = "project_name", agentName = "claude", tabLabel = "staff", herdrEnv = "1", args = [] }) {
+  const home = fixture();
+  const project = join(home, folder);
+  const scripts = join(project, "scripts");
+  mkdirSync(scripts, { recursive: true });
+  const helper = join(scripts, "chief_name.mjs");
+  writeFileSync(helper, readFileSync(packagedChiefName, "utf8"));
+  const state = join(home, "herdr.json");
+  const env = testEnv(home, { FAKE_HERDR_STATE: state, FAKE_WORKSPACE_LABEL: label, FAKE_AGENT_NAME: agentName, FAKE_TAB_LABEL: tabLabel, HERDR_ENV: herdrEnv });
+  const result = spawnSync(process.execPath, [helper, ...args], { cwd: project, encoding: "utf8", env, windowsHide: true });
+  return { home, project, state, result };
+}
 
 function recorder(prompts, answers = {}) {
   return async (label, suggested, options) => {
@@ -111,4 +138,95 @@ test("rules, skills, and README keep model selection generic; static suggestions
   const forbidden = /\b(?:luna|terra|sol|hydrogen)\b|gpt-6|openai-codex/i;
   for (const file of files) assert.doesNotMatch(readFileSync(file, "utf8"), forbidden, file);
   assert.deepEqual(Object.keys(MODEL_SUGGESTIONS), ["claude", "omp", "codex", "agy"]);
+});
+test("Chief name matching and workspace slug follow the naming contract", () => {
+  assert.equal(chiefNameForWorkspace("  TSN /  EP!! ", "fallback"), "chief-tsn-ep");
+  assert.equal(slug(" Worker___1 !!! "), "worker___1");
+  assert.equal(chiefNameForWorkspace("!!!", "My_Project"), "chief-my_project");
+  assert.equal(isChiefName("chief"), true);
+  assert.equal(isChiefName("chief-worker-1"), true);
+  assert.equal(isChiefName("chief-gemini"), true);
+  assert.equal(isChiefName("staff-gemini"), true);
+  assert.equal(isChiefName("worker-1"), false);
+  assert.equal(isWorkerName("worker-1"), true);
+  assert.equal(isWorkerName("chief-worker-1"), false);
+});
+
+test("launcher naming uses workspace label, renames legacy names, and is idempotent with fake Herdr", () => {
+  const run = runFakeChiefName({ label: "TSN EP / Lab", agentName: "staff" });
+  try {
+    assert.equal(run.result.status, 0, run.result.stderr);
+    assert.equal(run.result.stdout, "Chief pane pane-1 named chief-tsn-ep-lab; Chief tab labelled chief.\n");
+    let state = JSON.parse(readFileSync(run.state, "utf8"));
+    assert.equal(state.agents[0].name, "chief-tsn-ep-lab");
+    assert.equal(state.tabs[0].label, "chief");
+    assert.ok(state.calls.some((call) => call[0] === "agent" && call[1] === "rename" && call[3] === "chief-tsn-ep-lab"));
+    assert.ok(state.calls.some((call) => call[0] === "tab" && call[1] === "rename" && call[3] === "chief"));
+    const before = state.calls.length;
+    const second = spawnSync(process.execPath, [join(run.project, "scripts", "chief_name.mjs")], { cwd: run.project, encoding: "utf8", env: testEnv(run.home, { FAKE_HERDR_STATE: run.state, HERDR_ENV: "1" }), windowsHide: true });
+    assert.equal(second.status, 0, second.stderr);
+    state = JSON.parse(readFileSync(run.state, "utf8"));
+    assert.equal(state.calls.length - before, 4);
+    assert.equal(state.calls.filter((call) => call[0] === "agent" && call[1] === "rename").length, 1);
+    assert.equal(state.calls.filter((call) => call[0] === "tab" && call[1] === "rename").length, 1);
+  } finally { rmSync(run.home, { recursive: true, force: true }); }
+});
+
+test("Chief name falls back to project folder and outside Herdr leaves the name unset", () => {
+  const fallback = runFakeChiefName({ label: "!!!", folder: "My_Project", agentName: "claude" });
+  try {
+    assert.equal(fallback.result.status, 0, fallback.result.stderr);
+    assert.match(fallback.result.stdout, /chief-my_project/);
+  } finally { rmSync(fallback.home, { recursive: true, force: true }); }
+  const outside = runFakeChiefName({ label: "ignored", herdrEnv: "" });
+  try {
+    assert.equal(outside.result.status, 0, outside.result.stderr);
+    assert.equal(outside.result.stdout, "Chief name was not set (HERDR_ENV is not set).\n");
+    assert.equal(existsSync(outside.state), false);
+  } finally { rmSync(outside.home, { recursive: true, force: true }); }
+});
+test("Chief naming helper guards help, dry-run, and unknown arguments", () => {
+  const help = runFakeChiefName({ label: "TSN EP", args: ["--help"] });
+  try {
+    assert.equal(help.result.status, 0);
+    assert.equal(help.result.stdout, "Usage: node chief_name.mjs [--help | --dry-run]\n");
+    assert.equal(existsSync(help.state), false);
+  } finally { rmSync(help.home, { recursive: true, force: true }); }
+
+  const invalid = runFakeChiefName({ label: "TSN EP", args: ["--unknown"] });
+  try {
+    assert.equal(invalid.result.status, 2);
+    assert.match(invalid.result.stderr, /Usage:/);
+    assert.equal(existsSync(invalid.state), false);
+  } finally { rmSync(invalid.home, { recursive: true, force: true }); }
+
+  const dry = runFakeChiefName({ label: "TSN EP / Lab", agentName: "staff", tabLabel: "staff", args: ["--dry-run"] });
+  try {
+    assert.equal(dry.result.status, 0, dry.result.stderr);
+    assert.equal(dry.result.stdout, "Would name pane pane-1 chief-tsn-ep-lab; label tab tab-1 chief.\n");
+    const state = JSON.parse(readFileSync(dry.state, "utf8"));
+    assert.equal(state.agents[0].name, "staff");
+    assert.equal(state.tabs[0].label, "staff");
+    assert.equal(state.calls.some((call) => call[0] === "agent" && call[1] === "rename"), false);
+    assert.equal(state.calls.some((call) => call[0] === "tab" && call[1] === "rename"), false);
+  } finally { rmSync(dry.home, { recursive: true, force: true }); }
+});
+
+
+test("packaged chief init creates markers and keeps existing ledger rows", () => {
+  const home = fixture();
+  const project = join(home, "project");
+  const tasks = join(project, "chief_tasks");
+  mkdirSync(tasks, { recursive: true });
+  const original = { chief_name: "chief-tsn_ep", sessions: [{ name: "worker-7", pane: "pane-7", status: "live", tasks: [] }] };
+  writeFileSync(join(tasks, "sessions.json"), `${JSON.stringify(original, null, 2)}\n`);
+  try {
+    const result = spawnSync(process.execPath, [join(root, "assets", "scripts", "chief.ts"), "init"], { cwd: project, encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /"kept_sessions":1/);
+    assert.deepEqual(JSON.parse(readFileSync(join(tasks, "sessions.json"), "utf8")), original);
+    assert.ok(existsSync(join(tasks, "inbox")));
+    assert.ok(existsSync(join(tasks, "sessions.md")));
+    assert.ok(existsSync(join(project, "worker_report")));
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

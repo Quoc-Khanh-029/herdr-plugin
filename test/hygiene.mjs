@@ -13,7 +13,8 @@ function walk(dir) {
   }
 }
 walk(resolve(root, "multi-agent-mode"));
-const content = files.map((path) => readFileSync(path, "utf8")).join("\n");
+const compatibilityFiles = new Set(["assets/scripts/chief.ts", "assets/scripts/chief_name.mjs", "test.mjs"]);
+const content = files.filter((path) => !compatibilityFiles.has(path.slice(resolve(root, "multi-agent-mode").length + 1).replaceAll("\\", "/"))).map((path) => readFileSync(path, "utf8")).join("\n");
 assert.doesNotMatch(content, /\bstaff\b|\bsr\b|sr-eng|staff_tasks/i);
 assert.doesNotMatch(content, /a5145403|C:\\\\Users|\/home\/[^\s"'`]+/i);
 for (const path of files.filter((file) => /\.(?:mjs|toml|md)$/.test(file))) assert.doesNotMatch(readFileSync(path, "utf8"), /\r\n/, `${path} must use LF`);

@@ -8,5 +8,7 @@ if (Test-Path $configPath) {
 $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "360000"
 $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = $compactPercent
 $env:CODEGRAPH_HOOK_OFF = "1"
+& node (Join-Path $PSScriptRoot "chief_name.mjs")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & claude --agent chief --dangerously-skip-permissions --remote-control @args
 exit $LASTEXITCODE

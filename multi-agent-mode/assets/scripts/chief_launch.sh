@@ -7,5 +7,5 @@ if [[ -f "$config_file" ]]; then
 fi
 export CLAUDE_CODE_AUTO_COMPACT_WINDOW=360000
 export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=$compact_percent
-export CODEGRAPH_HOOK_OFF=1
+node "$(dirname "${BASH_SOURCE[0]}")/chief_name.mjs" || exit $?
 exec claude --agent chief --dangerously-skip-permissions --remote-control "$@"

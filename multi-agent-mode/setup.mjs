@@ -84,7 +84,7 @@ async function configure({ yes, reconfigure, dryRun = false, scan = scanHarnesse
   }
   return { path, config, scan };
 }
-const targets = [".claude/skills/chief/SKILL.md", ".claude/skills/chief/task_template.md", ".claude/skills/chief/ref_task_file.md", ".claude/skills/chief/ref_start_dispatch.md", ".claude/skills/chief/ref_inbox_reply.md", ".claude/skills/chief/ref_retire_ctx.md", ".claude/skills/chief/ref_quick.md", ".claude/skills/chief/ref_agy_herdr.md", ".claude/skills/worker/SKILL.md", ".claude/skills/worker/ref_signals.md", ".claude/skills/worker/ref_context_handoff.md", ".claude/skills/worker/report_format.md", ".claude/agents/chief.md", ".claude/agents/scout-code.md", ".claude/agents/scout-research.md", "scripts/chief.ts", "scripts/chief_launch.ps1", "scripts/chief_launch.sh", "worker-status-reference.md"];
+const targets = [".claude/skills/chief/SKILL.md", ".claude/skills/chief/task_template.md", ".claude/skills/chief/ref_task_file.md", ".claude/skills/chief/ref_start_dispatch.md", ".claude/skills/chief/ref_inbox_reply.md", ".claude/skills/chief/ref_retire_ctx.md", ".claude/skills/chief/ref_quick.md", ".claude/skills/chief/ref_agy_herdr.md", ".claude/skills/worker/SKILL.md", ".claude/skills/worker/ref_signals.md", ".claude/skills/worker/ref_context_handoff.md", ".claude/skills/worker/report_format.md", ".claude/agents/chief.md", ".claude/agents/scout-code.md", ".claude/agents/scout-research.md", "scripts/chief.ts", "scripts/chief_name.mjs", "scripts/chief_launch.ps1", "scripts/chief_launch.sh", "worker-status-reference.md"];
 
 function executable(name) {
   const command = process.platform === "win32" ? "where.exe" : "which";
